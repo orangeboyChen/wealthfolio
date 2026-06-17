@@ -1,0 +1,55 @@
+diff --git a/apps/server/src/api/connect.rs b/apps/server/src/api/connect.rs
+index 2f3e3ab5..596ac6f0 100644
+--- a/apps/server/src/api/connect.rs
++++ b/apps/server/src/api/connect.rs
+@@ -92,6 +92,41 @@ fn token_lifecycle_config() -> Option<TokenLifecycleConfig> {
+     Some(TokenLifecycleConfig::new(auth_url, api_key))
+ }
+ 
++// --- Connect Config endpoint (public, no auth required) ---
++
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConnectConfigResponse {
++    pub enabled: bool,
++    pub auth_url: Option<String>,
++    pub auth_publishable_key: Option<String>,
++    pub api_url: Option<String>,
++    pub oauth_callback_url: Option<String>,
++}
++
++async fn get_connect_config() -> Json<ConnectConfigResponse> {
++    let auth_url = connect_auth_url();
++    let publishable_key = connect_auth_api_key();
++    let api_url = crate::features::cloud_api_base_url();
++    let oauth_callback_url = std::env::var("CONNECT_OAUTH_CALLBACK_URL")
++        .ok()
++        .map(|v| v.trim().trim_end_matches('/').to_string())
++        .filter(|v| !v.is_empty())
++        .or_else(|| option_env!("CONNECT_OAUTH_CALLBACK_URL").map(|v| v.trim_end_matches('/').to_string()));
++
++    let enabled = auth_url.is_some()
++        && publishable_key.is_some()
++        && crate::features::cloud_sync_enabled();
++
++    Json(ConnectConfigResponse {
++        enabled,
++        auth_url,
++        auth_publishable_key: publishable_key,
++        api_url,
++        oauth_callback_url,
++    })
++}
++
+ /// Create a ConnectApiClient with a fresh access token
+ async fn create_connect_client(state: &AppState) -> ApiResult<ConnectApiClient> {
+     ensure_cloud_sync_enabled()?;
+@@ -1117,6 +1152,8 @@ async fn cancel_device_snapshot_upload(
+ 
+ pub fn router() -> Router<Arc<AppState>> {
+     Router::new()
++        // Connect config (public, no auth required)
++        .route("/connect/config", get(get_connect_config))
+         // Session management
+         .route("/connect/session", post(store_sync_session))
+         .route("/connect/session", delete(clear_sync_session))

@@ -1,0 +1,77 @@
+diff --git a/apps/tauri/src/commands/wealthfolio_connect.rs b/apps/tauri/src/commands/wealthfolio_connect.rs
+index 4fa28256..abdf86cb 100644
+--- a/apps/tauri/src/commands/wealthfolio_connect.rs
++++ b/apps/tauri/src/commands/wealthfolio_connect.rs
+@@ -1,6 +1,7 @@
+ use crate::commands::device_sync::clear_min_snapshot_created_at_from_store;
+ use crate::context::ServiceContext;
+ use crate::secret_store::KeyringSecretStore;
++use crate::services::{cloud_api_base_url, is_cloud_sync_enabled};
+ use log::{debug, error};
+ use serde::Serialize;
+ use std::sync::Arc;
+@@ -11,6 +12,42 @@ use wealthfolio_core::secrets::SecretStore;
+ const SYNC_ACCESS_TOKEN_KEY: &str = "sync_access_token";
+ const SYNC_REFRESH_TOKEN_KEY: &str = "sync_refresh_token";
+ 
++#[derive(Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConnectConfigResponse {
++    pub enabled: bool,
++    pub auth_url: Option<String>,
++    pub auth_publishable_key: Option<String>,
++    pub api_url: Option<String>,
++    pub oauth_callback_url: Option<String>,
++}
++
++#[tauri::command]
++pub async fn get_connect_config() -> Result<ConnectConfigResponse, String> {
++    let auth_url = option_env!("CONNECT_AUTH_URL")
++        .map(|v| v.trim().trim_end_matches('/').to_string())
++        .filter(|v| !v.is_empty());
++    let publishable_key = option_env!("CONNECT_AUTH_PUBLISHABLE_KEY")
++        .map(|v| v.trim().to_string())
++        .filter(|v| !v.is_empty());
++    let api_url = cloud_api_base_url();
++    let oauth_callback_url = option_env!("CONNECT_OAUTH_CALLBACK_URL")
++        .map(|v| v.trim().trim_end_matches('/').to_string())
++        .filter(|v| !v.is_empty());
++
++    let enabled = auth_url.is_some()
++        && publishable_key.is_some()
++        && is_cloud_sync_enabled();
++
++    Ok(ConnectConfigResponse {
++        enabled,
++        auth_url,
++        auth_publishable_key: publishable_key,
++        api_url,
++        oauth_callback_url,
++    })
++}
++
+ #[tauri::command]
+ pub async fn store_sync_session(
+     refresh_token: Option<String>,
+diff --git a/apps/tauri/src/lib.rs b/apps/tauri/src/lib.rs
+index 83642406..b35e9a2c 100644
+--- a/apps/tauri/src/lib.rs
++++ b/apps/tauri/src/lib.rs
+@@ -635,6 +635,7 @@ pub fn run() {
+             commands::addon::clear_addon_staging,
+             commands::addon::submit_addon_rating,
+             // Sync commands
++            commands::wealthfolio_connect::get_connect_config,
+             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
+             commands::wealthfolio_connect::store_sync_session,
+             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
+diff --git a/apps/tauri/src/services/mod.rs b/apps/tauri/src/services/mod.rs
+index 44dc25f3..2bf97f43 100644
+--- a/apps/tauri/src/services/mod.rs
++++ b/apps/tauri/src/services/mod.rs
+@@ -2,4 +2,4 @@
+ 
+ mod connect_service;
+ 
+-pub use connect_service::{cloud_api_base_url, ConnectService};
++pub use connect_service::{cloud_api_base_url, is_cloud_sync_enabled, ConnectService};
