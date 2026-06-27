@@ -52,9 +52,9 @@ index 8aeb5773..e8767fee 100644
 +// Default OAuth callback URL - can be overridden via backend config
 +const DEFAULT_OAUTH_CALLBACK_URL = "https://connect.wealthfolio.app/deeplink";
  
- type AuthCallbackPayload = { type: "code"; code: string } | { type: "error"; message: string };
- 
-@@ -197,9 +190,9 @@ function createHybridPkceStorage(storageKey: string) {
+ const parseConfiguredAuthCallbackUrl = (url: string) =>
+   parseAuthCallbackUrl(url, { hostedCallbackUrl: DEFAULT_OAUTH_CALLBACK_URL });
+@@ -181,9 +174,9 @@ function createHybridPkceStorage(storageKey: string) {
  }
  
  // Create a Supabase client with custom storage for persistent auth
@@ -67,7 +67,7 @@ index 8aeb5773..e8767fee 100644
      auth: {
        storageKey,
        storage: createHybridPkceStorage(storageKey),
-@@ -215,7 +208,16 @@ const createSupabaseClient = () => {
+@@ -199,7 +192,16 @@ const createSupabaseClient = () => {
  };
  
  // Internal provider used when Connect is enabled
@@ -85,9 +85,9 @@ index 8aeb5773..e8767fee 100644
    const { isAuthenticated } = useAuth();
    const [isInitializing, setIsInitializing] = useState(true);
    const [isLoading, setIsLoading] = useState(false);
-@@ -227,8 +229,8 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
- 
-   const supabaseRef = useRef<SupabaseClient | null>(null);
+@@ -216,8 +218,8 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
+   const processedAuthCodesRef = useRef<Map<string, number>>(new Map());
+   const postLoginSyncRequestSequenceRef = useRef(0);
  
 -  // Initialize Supabase client
 -  supabaseRef.current ??= createSupabaseClient();
@@ -96,7 +96,7 @@ index 8aeb5773..e8767fee 100644
  
    const supabase = supabaseRef.current;
  
-@@ -511,7 +513,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
+@@ -579,7 +581,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
          const redirectUrl = useASWebAuth
            ? DESKTOP_DEEP_LINK_URL // iOS: direct custom scheme, captured by ASWebAuth
            : isTauri && import.meta.env.PROD
@@ -105,7 +105,7 @@ index 8aeb5773..e8767fee 100644
              : getWebRedirectUrl(); // Web or dev mode
  
          const useSystemBrowser = isTauri && import.meta.env.PROD && !useASWebAuth;
-@@ -593,7 +595,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
+@@ -661,7 +663,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
          const redirectUrl =
            isTauri && import.meta.env.PROD
              ? isMobile
@@ -114,7 +114,7 @@ index 8aeb5773..e8767fee 100644
                : DESKTOP_DEEP_LINK_URL // Desktop: direct wealthfolio:// from email client
              : getWebRedirectUrl();
  
-@@ -774,11 +776,18 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
+@@ -851,11 +853,18 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
  
  // Main provider that chooses enabled/disabled path based on configuration
  export function WealthfolioConnectProvider({ children }: { children: ReactNode }) {
@@ -135,7 +135,7 @@ index 8aeb5773..e8767fee 100644
  
      let cancelled = false;
  
-@@ -802,14 +811,14 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
+@@ -879,14 +888,14 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
      return () => {
        cancelled = true;
      };
@@ -153,7 +153,7 @@ index 8aeb5773..e8767fee 100644
            isInitializing: true,
          }}
        >
-@@ -818,7 +827,7 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
+@@ -895,7 +904,7 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
      );
    }
  
@@ -162,7 +162,7 @@ index 8aeb5773..e8767fee 100644
      return (
        <WealthfolioConnectContext.Provider value={disabledContextValue}>
          {children}
-@@ -826,7 +835,11 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
+@@ -903,7 +912,11 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
      );
    }
  

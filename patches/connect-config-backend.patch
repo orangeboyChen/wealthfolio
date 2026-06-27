@@ -1,8 +1,8 @@
 diff --git a/apps/server/src/api/connect.rs b/apps/server/src/api/connect.rs
-index 2f3e3ab5..596ac6f0 100644
+index f3728e81..f6f34479 100644
 --- a/apps/server/src/api/connect.rs
 +++ b/apps/server/src/api/connect.rs
-@@ -92,6 +92,41 @@ fn token_lifecycle_config() -> Option<TokenLifecycleConfig> {
+@@ -151,6 +151,41 @@ fn token_lifecycle_config() -> Option<TokenLifecycleConfig> {
      Some(TokenLifecycleConfig::new(auth_url, api_key))
  }
  
@@ -44,7 +44,7 @@ index 2f3e3ab5..596ac6f0 100644
  /// Create a ConnectApiClient with a fresh access token
  async fn create_connect_client(state: &AppState) -> ApiResult<ConnectApiClient> {
      ensure_cloud_sync_enabled()?;
-@@ -1117,6 +1152,8 @@ async fn cancel_device_snapshot_upload(
+@@ -1289,6 +1324,8 @@ async fn cancel_device_snapshot_upload(
  
  pub fn router() -> Router<Arc<AppState>> {
      Router::new()
