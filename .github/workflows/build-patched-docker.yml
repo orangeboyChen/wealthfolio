@@ -157,20 +157,11 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit }}
           path: source
 
-      - name: Apply local patch files
+      - name: Apply connect config transformations
         working-directory: source
         run: |
           set -euo pipefail
-          patches=(
-            ../automation/patches/connect-config-frontend.patch
-            ../automation/patches/connect-config-backend.patch
-            ../automation/patches/connect-config-tauri.patch
-          )
-
-          for patch in "${patches[@]}"; do
-            git apply --3way --check "$patch"
-            git apply --3way "$patch"
-          done
+          node ../automation/scripts/apply-connect-config-patch.mjs
 
       - name: Resolve patched commit SHA
         id: vars
