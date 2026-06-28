@@ -163,6 +163,12 @@ jobs:
           set -euo pipefail
           node ../automation/scripts/apply-connect-config-patch.mjs
 
+      - name: Apply database compatibility transformation
+        working-directory: source
+        run: |
+          set -euo pipefail
+          node ../automation/scripts/apply-db-compat-patch.mjs
+
       - name: Resolve patched commit SHA
         id: vars
         working-directory: source
