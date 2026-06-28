@@ -73,9 +73,10 @@ function updateDatabaseModule() {
             let message = e.to_string();
             if is_missing_allocation_targets_error(&message) {
                 warn!(
-                    "Detected missing allocation_targets schema; repairing legacy database and retrying migrations."
+                    "Detected missing allocation_targets schema; repairing legacy database, recording the legacy migration as applied, and retrying migrations."
                 );
                 repair_allocation_targets_schema(db_path)?;
+                mark_migration_applied(db_path, "2026-05-25-000002_allocation_targets")?;
 
                 connection
                     .run_pending_migrations(MIGRATIONS)
@@ -122,6 +123,24 @@ function updateDatabaseModule() {
         })?;
 
     Ok(exists != 0)
+}
+
+fn mark_migration_applied(db_path: &str, version: &str) -> Result<()> {
+    let conn = RusqliteConnection::open(db_path).map_err(|e| {
+        error!("Failed to open database for migration history repair: {}", e);
+        Error::Database(DatabaseError::MigrationFailed(e.to_string()))
+    })?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO __diesel_schema_migrations (version) VALUES (?1)",
+        [version],
+    )
+    .map_err(|e| {
+        error!("Failed to record repaired migration history: {}", e);
+        Error::Database(DatabaseError::MigrationFailed(e.to_string()))
+    })?;
+
+    Ok(())
 }
 
 fn repair_allocation_targets_schema(db_path: &str) -> Result<()> {
