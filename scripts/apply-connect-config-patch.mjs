@@ -140,6 +140,46 @@ function updateFrontendCore() {
   writeText("apps/frontend/src/adapters/web/core.ts", content);
 }
 
+function updateConnectionStatus() {
+  const connectedCheck = 'connection.status === "connected" && !connection.disabled';
+  const selfHostedConnectedCheck =
+    '(connection.status === "connected" || connection.status === "active") && !connection.disabled';
+
+  for (const relativePath of [
+    "apps/frontend/src/features/wealthfolio-connect/pages/connect-page.tsx",
+    "apps/frontend/src/features/wealthfolio-connect/components/connected-view.tsx",
+  ]) {
+    let content = readText(relativePath);
+    content = replaceOnce(
+      content,
+      connectedCheck,
+      selfHostedConnectedCheck,
+      `self-hosted connection status in ${relativePath}`,
+    );
+    writeText(relativePath, content);
+  }
+
+  let content = readText("crates/connect/src/post_login_bootstrap.rs");
+  content = replaceOnce(
+    content,
+    'status.eq_ignore_ascii_case("connected")',
+    'status.eq_ignore_ascii_case("connected") || status.eq_ignore_ascii_case("active")',
+    "post-login self-hosted connection status",
+  );
+  writeText("crates/connect/src/post_login_bootstrap.rs", content);
+}
+
+function updateServerCsp() {
+  let content = readText("apps/server/src/api.rs");
+  content = replaceOnce(
+    content,
+    "https://connect-staging.wealthfolio.app;",
+    "https://connect-staging.wealthfolio.app https://wealthfolio-connect.home.nowcent.cn:54443;",
+    "self-hosted Connect CSP origin",
+  );
+  writeText("apps/server/src/api.rs", content);
+}
+
 function updateFrontendConnectConfig() {
   const content = `/**
  * Wealthfolio Connect runtime configuration.
@@ -550,7 +590,9 @@ pub async fn get_connect_config() -> Result<ConnectConfigResponse, String> {
 
 function main() {
   updateBackend();
+  updateServerCsp();
   updateFrontendCore();
+  updateConnectionStatus();
   updateFrontendConnectConfig();
   updateFrontendProvider();
   updateTauri();
