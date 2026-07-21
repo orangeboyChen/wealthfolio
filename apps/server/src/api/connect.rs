@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     routing::{delete, get, post},
     Json, Router,
 };
@@ -21,7 +22,6 @@ use crate::events::{
     EventBus, ServerEvent, BROKER_SYNC_COMPLETE, BROKER_SYNC_ERROR, BROKER_SYNC_START,
 };
 use crate::main_lib::AppState;
-use axum::http::StatusCode;
 use wealthfolio_connect::prepare_post_login_broker_bootstrap;
 use wealthfolio_connect::{
     acquire_broker_sync_guard,
@@ -149,6 +149,42 @@ fn token_lifecycle_config() -> Option<TokenLifecycleConfig> {
     let auth_url = connect_auth_url()?;
     let api_key = connect_auth_api_key()?;
     Some(TokenLifecycleConfig::new(auth_url, api_key))
+}
+
+// --- Connect Config endpoint (public, no auth required) ---
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectConfigResponse {
+    pub enabled: bool,
+    pub auth_url: Option<String>,
+    pub auth_publishable_key: Option<String>,
+    pub api_url: Option<String>,
+    pub oauth_callback_url: Option<String>,
+}
+
+async fn get_connect_config() -> Json<ConnectConfigResponse> {
+    let auth_url = connect_auth_url();
+    let publishable_key = connect_auth_api_key();
+    let api_url = crate::features::cloud_api_base_url();
+    let oauth_callback_url = std::env::var("CONNECT_OAUTH_CALLBACK_URL")
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            option_env!("CONNECT_OAUTH_CALLBACK_URL").map(|v| v.trim_end_matches('/').to_string())
+        });
+
+    let enabled =
+        auth_url.is_some() && publishable_key.is_some() && crate::features::cloud_sync_enabled();
+
+    Json(ConnectConfigResponse {
+        enabled,
+        auth_url,
+        auth_publishable_key: publishable_key,
+        api_url,
+        oauth_callback_url,
+    })
 }
 
 /// Create a ConnectApiClient with a fresh access token
@@ -1289,6 +1325,8 @@ async fn cancel_device_snapshot_upload(
 
 pub fn router() -> Router<Arc<AppState>> {
     let router = Router::new()
+        // Connect config (public, no auth required)
+        .route("/connect/config", get(get_connect_config))
         // Session management
         .route("/connect/session", post(store_sync_session))
         .route("/connect/post-login-bootstrap", post(post_login_bootstrap))

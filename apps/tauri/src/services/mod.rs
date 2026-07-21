@@ -2,4 +2,4 @@
 
 mod connect_service;
 
-pub use connect_service::{cloud_api_base_url, ConnectService};
+pub use connect_service::{cloud_api_base_url, is_cloud_sync_enabled, ConnectService};

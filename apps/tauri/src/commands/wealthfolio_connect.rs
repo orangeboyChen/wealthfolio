@@ -9,6 +9,7 @@ use crate::commands::device_sync::{
 };
 use crate::context::ServiceContext;
 use crate::secret_store::KeyringSecretStore;
+use crate::services::{cloud_api_base_url, is_cloud_sync_enabled};
 use log::{debug, error};
 use serde::Serialize;
 use std::future::Future;
@@ -28,6 +29,42 @@ use wealthfolio_device_sync::SyncState;
 // Storage keys (without prefix - the SecretStore adds "wealthfolio_" prefix)
 const SYNC_ACCESS_TOKEN_KEY: &str = "sync_access_token";
 const SYNC_REFRESH_TOKEN_KEY: &str = "sync_refresh_token";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectConfigResponse {
+    pub enabled: bool,
+    pub auth_url: Option<String>,
+    pub auth_publishable_key: Option<String>,
+    pub api_url: Option<String>,
+    pub oauth_callback_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_connect_config() -> Result<ConnectConfigResponse, String> {
+    let auth_url = option_env!("CONNECT_AUTH_URL")
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty());
+    let publishable_key = option_env!("CONNECT_AUTH_PUBLISHABLE_KEY")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let api_url = cloud_api_base_url();
+    let oauth_callback_url = option_env!("CONNECT_OAUTH_CALLBACK_URL")
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty());
+
+    let enabled = auth_url.is_some()
+        && publishable_key.is_some()
+        && is_cloud_sync_enabled();
+
+    Ok(ConnectConfigResponse {
+        enabled,
+        auth_url,
+        auth_publishable_key: publishable_key,
+        api_url,
+        oauth_callback_url,
+    })
+}
 
 #[cfg(feature = "device-sync")]
 enum PostLoginDeviceBootstrapDecision {

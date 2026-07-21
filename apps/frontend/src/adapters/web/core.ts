@@ -302,6 +302,7 @@ export const COMMANDS: CommandMap = {
   approve_pairing_overwrite: { method: "POST", path: "/sync/pairing/flow/approve-overwrite" },
   cancel_pairing_flow: { method: "POST", path: "/sync/pairing/flow/cancel" },
   // Wealthfolio Connect (Broker Sync)
+  get_connect_config: { method: "GET", path: "/connect/config" },
   store_sync_session: { method: "POST", path: "/connect/session" },
   post_login_bootstrap: { method: "POST", path: "/connect/post-login-bootstrap" },
   clear_sync_session: { method: "DELETE", path: "/connect/session" },

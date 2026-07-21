@@ -306,7 +306,9 @@ function BrokerConnectionsCard({
                 connection.brokerage?.display_name ??
                 connection.brokerage?.name ??
                 t("connect:connections.unknownBroker");
-              const isConnected = connection.status === "connected" && !connection.disabled;
+              const isConnected =
+                (connection.status === "connected" || connection.status === "active") &&
+                !connection.disabled;
 
               return (
                 <div

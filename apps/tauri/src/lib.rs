@@ -713,6 +713,7 @@ pub fn run() {
             commands::addon::set_addon_storage_item,
             commands::addon::delete_addon_storage_item,
             // Sync commands
+            commands::wealthfolio_connect::get_connect_config,
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::store_sync_session,
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]

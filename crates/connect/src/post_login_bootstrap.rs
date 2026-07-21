@@ -85,10 +85,31 @@ pub enum PostLoginBrokerBootstrapDecision<Guard> {
 #[cfg(feature = "broker")]
 pub fn is_active_broker_connection(connection: &crate::broker::BrokerConnection) -> bool {
     !connection.disabled
-        && connection
-            .status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("connected"))
+        && connection.status.as_deref().is_some_and(|status| {
+            status.eq_ignore_ascii_case("connected") || status.eq_ignore_ascii_case("active")
+        })
+}
+
+#[cfg(all(test, feature = "broker"))]
+mod tests {
+    use super::is_active_broker_connection;
+    use crate::broker::BrokerConnection;
+
+    #[test]
+    fn treats_self_hosted_active_connections_as_connected() {
+        let connection = BrokerConnection {
+            id: "connection".into(),
+            brokerage: None,
+            connection_type: None,
+            status: Some("active".into()),
+            disabled: false,
+            disabled_date: None,
+            updated_at: None,
+            name: None,
+        };
+
+        assert!(is_active_broker_connection(&connection));
+    }
 }
 
 #[cfg(feature = "broker")]

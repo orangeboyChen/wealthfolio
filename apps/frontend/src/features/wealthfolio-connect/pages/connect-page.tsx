@@ -531,7 +531,8 @@ function ConnectionItem({
     t("connect:connections.unknown");
   const logoUrl =
     connection.brokerage?.aws_s3_square_logo_url ?? connection.brokerage?.aws_s3_logo_url;
-  const isConnected = connection.status === "connected" && !connection.disabled;
+  const isConnected =
+    (connection.status === "connected" || connection.status === "active") && !connection.disabled;
   const syncSummary = getConnectionSyncSummary(syncEnabledCount, totalAccountCount, t);
 
   return (

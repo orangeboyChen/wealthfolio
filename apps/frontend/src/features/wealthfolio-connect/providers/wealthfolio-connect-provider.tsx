@@ -9,7 +9,7 @@ import {
 } from "@/adapters";
 import { useAuth } from "@/context/auth-context";
 import { getPlatform } from "@/hooks/use-platform";
-import { CONNECT_ENABLED } from "@/lib/connect-config";
+import { useConnectConfig, type ConnectConfig } from "@/lib/connect-config";
 import { createClient, Session, SupabaseClient, User } from "@supabase/supabase-js";
 import {
   createContext,
@@ -28,12 +28,9 @@ import { getUserInfo } from "../services/broker-service";
 import type { UserInfo } from "../types";
 import { parseAuthCallbackUrl } from "../lib/auth-callback";
 
-// Auth configuration - these are public/publishable keys (safe for client-side)
-// Can be overridden via environment variables: CONNECT_AUTH_URL and CONNECT_AUTH_PUBLISHABLE_KEY
-const AUTH_URL = (import.meta.env.CONNECT_AUTH_URL as string) || "https://auth.wealthfolio.app";
-const AUTH_PUBLISHABLE_KEY =
-  (import.meta.env.CONNECT_AUTH_PUBLISHABLE_KEY as string) ||
-  "sb_publishable_ZSZbXNtWtnh9i2nqJ2UL4A_NV8ZVutd";
+// Auth configuration defaults - used only when backend config is unavailable
+const DEFAULT_AUTH_URL = "https://auth.wealthfolio.app";
+const DEFAULT_AUTH_PUBLISHABLE_KEY = "sb_publishable_ZSZbXNtWtnh9i2nqJ2UL4A_NV8ZVutd";
 
 // Key for storing refresh token in keyring/localStorage (for session restoration)
 // Note: For keyring (Tauri), the "wealthfolio_" prefix is added automatically by SecretStore
@@ -47,15 +44,11 @@ const getWebRedirectUrl = () => {
   return `${window.location.origin}/auth/callback`;
 };
 
-// For OAuth on desktop, we use a hosted callback page that redirects to the deep link
-// This is necessary because browsers block direct navigation to custom URL schemes
-// Uses env variable in dev, falls back to production URL for bundled builds
-const HOSTED_OAUTH_CALLBACK_URL =
-  (import.meta.env.CONNECT_OAUTH_CALLBACK_URL as string) ||
-  "https://connect.wealthfolio.app/deeplink";
+// Default OAuth callback URL - can be overridden via backend config
+const DEFAULT_OAUTH_CALLBACK_URL = "https://connect.wealthfolio.app/deeplink";
 
 const parseConfiguredAuthCallbackUrl = (url: string) =>
-  parseAuthCallbackUrl(url, { hostedCallbackUrl: HOSTED_OAUTH_CALLBACK_URL });
+  parseAuthCallbackUrl(url, { hostedCallbackUrl: DEFAULT_OAUTH_CALLBACK_URL });
 
 const PROCESSED_AUTH_CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_PROCESSED_AUTH_CODES = 20;
@@ -182,9 +175,9 @@ function createHybridPkceStorage(storageKey: string) {
 }
 
 // Create a Supabase client with custom storage for persistent auth
-const createSupabaseClient = () => {
-  const storageKey = getAuthStorageKey(AUTH_URL);
-  return createClient(AUTH_URL, AUTH_PUBLISHABLE_KEY, {
+const createSupabaseClient = (authUrl: string, publishableKey: string) => {
+  const storageKey = getAuthStorageKey(authUrl);
+  return createClient(authUrl, publishableKey, {
     auth: {
       storageKey,
       storage: createHybridPkceStorage(storageKey),
@@ -200,7 +193,16 @@ const createSupabaseClient = () => {
 };
 
 // Internal provider used when Connect is enabled
-function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }) {
+function EnabledWealthfolioConnectProvider({
+  children,
+  config,
+}: {
+  children: ReactNode;
+  config: ConnectConfig;
+}) {
+  const authUrl = config.authUrl || DEFAULT_AUTH_URL;
+  const publishableKey = config.authPublishableKey || DEFAULT_AUTH_PUBLISHABLE_KEY;
+  const oauthCallbackUrl = config.oauthCallbackUrl || DEFAULT_OAUTH_CALLBACK_URL;
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
   const [isInitializing, setIsInitializing] = useState(true);
@@ -218,8 +220,8 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
   const processedAuthCodesRef = useRef<Map<string, number>>(new Map());
   const postLoginSyncRequestSequenceRef = useRef(0);
 
-  // Initialize Supabase client
-  supabaseRef.current ??= createSupabaseClient();
+  // Initialize Supabase client with runtime config
+  supabaseRef.current ??= createSupabaseClient(authUrl, publishableKey);
 
   const supabase = supabaseRef.current;
 
@@ -581,7 +583,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         const redirectUrl = useASWebAuth
           ? DESKTOP_DEEP_LINK_URL // iOS: direct custom scheme, captured by ASWebAuth
           : isTauri && import.meta.env.PROD
-            ? HOSTED_OAUTH_CALLBACK_URL // Desktop & Android: bounce page → wealthfolio://
+            ? oauthCallbackUrl // Desktop & Android: bounce page → wealthfolio://
             : getWebRedirectUrl(); // Web or dev mode
 
         const useSystemBrowser = isTauri && import.meta.env.PROD && !useASWebAuth;
@@ -663,7 +665,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         const redirectUrl =
           isTauri && import.meta.env.PROD
             ? isMobile
-              ? HOSTED_OAUTH_CALLBACK_URL // Mobile: bounce page → wealthfolio://
+              ? oauthCallbackUrl // Mobile: bounce page → wealthfolio://
               : DESKTOP_DEEP_LINK_URL // Desktop: direct wealthfolio:// from email client
             : getWebRedirectUrl();
 
@@ -856,11 +858,18 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
 
 // Main provider that chooses enabled/disabled path based on configuration
 export function WealthfolioConnectProvider({ children }: { children: ReactNode }) {
-  const [isCapabilityCheckComplete, setIsCapabilityCheckComplete] = useState(!CONNECT_ENABLED);
+  const { data: connectConfig, isLoading: isConfigLoading } = useConnectConfig();
+  const [isCapabilityCheckComplete, setIsCapabilityCheckComplete] = useState(false);
   const [isCloudSyncAvailable, setIsCloudSyncAvailable] = useState(false);
 
+  const isConnectEnabled = connectConfig?.enabled ?? false;
+
   useEffect(() => {
-    if (!CONNECT_ENABLED) return;
+    if (isConfigLoading) return;
+    if (!isConnectEnabled) {
+      setIsCapabilityCheckComplete(true);
+      return;
+    }
 
     let cancelled = false;
 
@@ -884,14 +893,14 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isConfigLoading, isConnectEnabled]);
 
-  if (!isCapabilityCheckComplete) {
+  if (isConfigLoading || !isCapabilityCheckComplete) {
     return (
       <WealthfolioConnectContext.Provider
         value={{
           ...disabledContextValue,
-          isEnabled: true,
+          isEnabled: isConnectEnabled,
           isInitializing: true,
         }}
       >
@@ -900,7 +909,7 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
     );
   }
 
-  if (!CONNECT_ENABLED || !isCloudSyncAvailable) {
+  if (!isConnectEnabled || !isCloudSyncAvailable) {
     return (
       <WealthfolioConnectContext.Provider value={disabledContextValue}>
         {children}
@@ -908,7 +917,11 @@ export function WealthfolioConnectProvider({ children }: { children: ReactNode }
     );
   }
 
-  return <EnabledWealthfolioConnectProvider>{children}</EnabledWealthfolioConnectProvider>;
+  return (
+    <EnabledWealthfolioConnectProvider config={connectConfig!}>
+      {children}
+    </EnabledWealthfolioConnectProvider>
+  );
 }
 
 export const useWealthfolioConnect = () => {
