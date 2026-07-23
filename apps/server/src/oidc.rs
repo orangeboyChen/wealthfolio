@@ -9,7 +9,7 @@
 //! a short-lived **encrypted** cookie rather than server memory, so the flow is
 //! stateless and survives restarts.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use axum::{
@@ -26,9 +26,13 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Key, Nonce,
 };
 use openidconnect::{
-    core::{CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreProviderMetadata},
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce as OidcNonce,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    core::{
+        CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreIdTokenVerifier,
+        CoreJsonWebKeySet, CoreProviderMetadata,
+    },
+    AuthorizationCode, ClaimsVerificationError, ClientId, ClientSecret, CsrfToken, IssuerUrl,
+    Nonce as OidcNonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
+    SignatureVerificationError, TokenResponse,
 };
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -150,6 +154,7 @@ impl OidcConfig {
 /// verbose typestate generics in a struct field).
 pub struct OidcManager {
     provider_metadata: CoreProviderMetadata,
+    jwks: RwLock<CoreJsonWebKeySet>,
     client_id: ClientId,
     /// Raw client id string, used for the `client_id` logout parameter.
     client_id_str: String,
@@ -208,6 +213,7 @@ impl OidcManager {
         };
 
         Ok(Self {
+            jwks: RwLock::new(provider_metadata.jwks().clone()),
             provider_metadata,
             client_id: ClientId::new(config.client_id.clone()),
             client_id_str: config.client_id.clone(),
@@ -246,6 +252,36 @@ impl OidcManager {
         .set_redirect_uri(self.redirect_url.clone())
     }
 
+    fn id_token_verifier(&self) -> CoreIdTokenVerifier<'static> {
+        let jwks = self.jwks.read().expect("OIDC JWKS lock poisoned").clone();
+        let verifier = match &self.client_secret {
+            Some(client_secret) => CoreIdTokenVerifier::new_confidential_client(
+                self.client_id.clone(),
+                client_secret.clone(),
+                self.provider_metadata.issuer().clone(),
+                jwks,
+            ),
+            None => CoreIdTokenVerifier::new_public_client(
+                self.client_id.clone(),
+                self.provider_metadata.issuer().clone(),
+                jwks,
+            ),
+        };
+        verifier.set_allowed_algs(
+            self.provider_metadata
+                .id_token_signing_alg_values_supported()
+                .clone(),
+        )
+    }
+
+    async fn refresh_jwks(&self) -> anyhow::Result<()> {
+        let jwks =
+            CoreJsonWebKeySet::fetch_async(self.provider_metadata.jwks_uri(), &self.http_client)
+                .await?;
+        *self.jwks.write().expect("OIDC JWKS lock poisoned") = jwks;
+        Ok(())
+    }
+
     /// Whether the authenticated subject/email is permitted. Extracts the claim
     /// primitives and delegates to [`check_allowlist`] (kept pure for testing).
     fn is_allowed(&self, claims: &CoreIdTokenClaims) -> bool {
@@ -257,6 +293,13 @@ impl OidcManager {
             claims.email_verified(),
         )
     }
+}
+
+fn needs_jwks_refresh(error: &ClaimsVerificationError) -> bool {
+    matches!(
+        error,
+        ClaimsVerificationError::SignatureVerification(SignatureVerificationError::NoMatchingKey)
+    )
 }
 
 /// Allowlist policy, split from claim extraction so it is unit-testable.
@@ -412,12 +455,27 @@ pub async fn oidc_callback(
     let Some(id_token) = token_response.id_token() else {
         return error_redirect("oidc_no_id_token");
     };
-    let verifier = client.id_token_verifier();
     let nonce = OidcNonce::new(tx.nonce);
+    let verifier = oidc.id_token_verifier();
     let claims = match id_token.claims(&verifier, &nonce) {
         Ok(claims) => claims,
-        Err(e) => {
-            tracing::warn!("OIDC ID token verification failed: {e}");
+        Err(error) if needs_jwks_refresh(&error) => {
+            tracing::info!("OIDC ID token key not found; refreshing JWKS");
+            if let Err(refresh_error) = oidc.refresh_jwks().await {
+                tracing::warn!("OIDC JWKS refresh failed: {refresh_error}");
+                return error_redirect("oidc_invalid_token");
+            }
+            let verifier = oidc.id_token_verifier();
+            match id_token.claims(&verifier, &nonce) {
+                Ok(claims) => claims,
+                Err(error) => {
+                    tracing::warn!("OIDC ID token verification failed after JWKS refresh: {error}");
+                    return error_redirect("oidc_invalid_token");
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!("OIDC ID token verification failed: {error}");
             return error_redirect("oidc_invalid_token");
         }
     };
@@ -674,6 +732,23 @@ fn csv_list(key: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jwks_refresh_only_retries_missing_keys() {
+        assert!(needs_jwks_refresh(
+            &ClaimsVerificationError::SignatureVerification(
+                SignatureVerificationError::NoMatchingKey,
+            ),
+        ));
+        assert!(!needs_jwks_refresh(
+            &ClaimsVerificationError::SignatureVerification(
+                SignatureVerificationError::CryptoError("invalid signature".into()),
+            ),
+        ));
+        assert!(!needs_jwks_refresh(&ClaimsVerificationError::InvalidNonce(
+            "invalid nonce".into(),
+        )));
+    }
 
     #[test]
     fn tx_cookie_roundtrips() {
