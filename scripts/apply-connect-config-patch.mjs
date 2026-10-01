@@ -361,83 +361,49 @@ const parseConfiguredAuthCallbackUrl = (url: string) =>
     "enabled provider client init",
   );
 
-  content = replaceOnce(
-    content,
-    `            ? HOSTED_OAUTH_CALLBACK_URL // Desktop & Android: bounce page → wealthfolio://
-`,
-    `            ? oauthCallbackUrl // Desktop & Android: bounce page → wealthfolio://
-`,
-    "oauth redirect desktop",
-  );
-
-  content = replaceOnce(
-    content,
-    `              ? HOSTED_OAUTH_CALLBACK_URL // Mobile: bounce page → wealthfolio://
-`,
-    `              ? oauthCallbackUrl // Mobile: bounce page → wealthfolio://
-`,
-    "oauth redirect mobile",
-  );
-
-  content = replaceOnce(
-    content,
-    `export function WealthfolioConnectProvider({ children }: { children: ReactNode }) {
-  const [isCapabilityCheckComplete, setIsCapabilityCheckComplete] = useState(!CONNECT_ENABLED);
-  const [isCloudSyncAvailable, setIsCloudSyncAvailable] = useState(false);
-
-  useEffect(() => {
-    if (!CONNECT_ENABLED) return;
-
-    let cancelled = false;
-
-    void getPlatform()
-      .then((platform) => {
-        if (cancelled) return;
-        setIsCloudSyncAvailable(
-          platform.capabilities?.cloud_sync ?? platform.capabilities?.connect_sync ?? true,
-        );
-      })
-      .catch(() => {
-        // Fall back to enabled on detection errors to preserve current behavior.
-        if (cancelled) return;
-        setIsCloudSyncAvailable(true);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setIsCapabilityCheckComplete(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!isCapabilityCheckComplete) {
-    return (
-      <WealthfolioConnectContext.Provider
-        value={{
-          ...disabledContextValue,
-          isEnabled: true,
-          isInitializing: true,
-        }}
-      >
-        {children}
-      </WealthfolioConnectContext.Provider>
+  const desktopHostedRedirect = `            ? HOSTED_OAUTH_CALLBACK_URL // Hosted bounce preserves the profile flow fragment\n`;
+  if (content.includes(desktopHostedRedirect)) {
+    content = replaceOnce(
+      content,
+      desktopHostedRedirect,
+      `            ? oauthCallbackUrl // Desktop & Android: bounce page → wealthfolio://\n`,
+      "oauth redirect desktop",
+    );
+  } else {
+    content = replaceOnce(
+      content,
+      `            ? HOSTED_OAUTH_CALLBACK_URL`,
+      `            ? oauthCallbackUrl // Desktop & Android: bounce page → wealthfolio://\n`,
+      "oauth redirect desktop",
     );
   }
 
-  if (!CONNECT_ENABLED || !isCloudSyncAvailable) {
-    return (
-      <WealthfolioConnectContext.Provider value={disabledContextValue}>
-        {children}
-      </WealthfolioConnectContext.Provider>
+  const mobileHostedRedirect = `              ? HOSTED_OAUTH_CALLBACK_URL // Hosted bounce preserves the profile flow fragment\n`;
+  if (content.includes(mobileHostedRedirect)) {
+    content = replaceOnce(
+      content,
+      mobileHostedRedirect,
+      `              ? oauthCallbackUrl // Mobile: bounce page → wealthfolio://\n`,
+      "oauth redirect mobile",
+    );
+  } else if (content.includes("              ? HOSTED_OAUTH_CALLBACK_URL")) {
+    content = replaceOnce(
+      content,
+      `              ? HOSTED_OAUTH_CALLBACK_URL`,
+      `              ? oauthCallbackUrl // Mobile: bounce page → wealthfolio://\n`,
+      "oauth redirect mobile",
     );
   }
 
-  return <EnabledWealthfolioConnectProvider>{children}</EnabledWealthfolioConnectProvider>;
-}
-`,
-    `export function WealthfolioConnectProvider({ children }: { children: ReactNode }) {
+  const providerStart = content.indexOf(
+    "export function WealthfolioConnectProvider({ children }: { children: ReactNode }) {",
+  );
+  const providerEnd = content.indexOf("\nexport const useWealthfolioConnect", providerStart);
+  if (providerStart === -1 || providerEnd === -1) {
+    throw new Error("Unable to locate main provider");
+  }
+
+  content = content.slice(0, providerStart) + `export function WealthfolioConnectProvider({ children }: { children: ReactNode }) {
   const { data: connectConfig, isLoading: isConfigLoading } = useConnectConfig();
   const [isCapabilityCheckComplete, setIsCapabilityCheckComplete] = useState(false);
   const [isCloudSyncAvailable, setIsCloudSyncAvailable] = useState(false);
@@ -503,9 +469,7 @@ const parseConfiguredAuthCallbackUrl = (url: string) =>
     </EnabledWealthfolioConnectProvider>
   );
 }
-`,
-    "main provider",
-  );
+` + content.slice(providerEnd);
 
   writeText("apps/frontend/src/features/wealthfolio-connect/providers/wealthfolio-connect-provider.tsx", content);
 }
@@ -513,22 +477,20 @@ const parseConfiguredAuthCallbackUrl = (url: string) =>
 function updateTauri() {
   let content = readText("apps/tauri/src/commands/wealthfolio_connect.rs");
 
-  content = replaceOnce(
-    content,
-    "use crate::secret_store::KeyringSecretStore;\n",
-    "use crate::secret_store::KeyringSecretStore;\nuse crate::services::{cloud_api_base_url, is_cloud_sync_enabled};\n",
-    "tauri services import",
-  );
+  if (!content.includes("use crate::services::{cloud_api_base_url, is_cloud_sync_enabled};")) {
+    content = insertAfter(
+      content,
+      "use crate::context::ServiceContext;\n",
+      "use crate::services::{cloud_api_base_url, is_cloud_sync_enabled};\n",
+      "tauri services import",
+    );
+  }
 
-  content = replaceOnce(
-    content,
-    `const SYNC_ACCESS_TOKEN_KEY: &str = "sync_access_token";
-const SYNC_REFRESH_TOKEN_KEY: &str = "sync_refresh_token";
-`,
-    `const SYNC_ACCESS_TOKEN_KEY: &str = "sync_access_token";
-const SYNC_REFRESH_TOKEN_KEY: &str = "sync_refresh_token";
-
-#[derive(Serialize)]
+  if (!content.includes("pub async fn get_connect_config()")) {
+    content = insertBefore(
+      content,
+      "#[tauri::command]\n",
+    `#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectConfigResponse {
     pub enabled: bool,
@@ -564,27 +526,32 @@ pub async fn get_connect_config() -> Result<ConnectConfigResponse, String> {
     })
 }
 `,
-    "tauri connect config command",
-  );
+      "tauri connect config command",
+    );
+  }
 
   writeText("apps/tauri/src/commands/wealthfolio_connect.rs", content);
 
   content = readText("apps/tauri/src/lib.rs");
-  content = insertAfter(
-    content,
-    "            // Sync commands\n",
-    "            commands::wealthfolio_connect::get_connect_config,\n",
-    "tauri command registration",
-  );
+  if (!content.includes("commands::wealthfolio_connect::get_connect_config,")) {
+    content = insertAfter(
+      content,
+      "            // Sync commands\n",
+      "            commands::wealthfolio_connect::get_connect_config,\n",
+      "tauri command registration",
+    );
+  }
   writeText("apps/tauri/src/lib.rs", content);
 
   content = readText("apps/tauri/src/services/mod.rs");
-  content = replaceOnce(
-    content,
-    "pub use connect_service::{cloud_api_base_url, ConnectService};\n",
-    "pub use connect_service::{cloud_api_base_url, is_cloud_sync_enabled, ConnectService};\n",
-    "tauri services export",
-  );
+  if (!content.includes("is_cloud_sync_enabled")) {
+    content = replaceOnce(
+      content,
+      "pub use connect_service::{cloud_api_base_url, ConnectService};\n",
+      "pub use connect_service::{cloud_api_base_url, is_cloud_sync_enabled, ConnectService};\n",
+      "tauri services export",
+    );
+  }
   writeText("apps/tauri/src/services/mod.rs", content);
 }
 
