@@ -46,22 +46,18 @@ function insertBefore(content, anchor, insert, label) {
 function updateDatabaseModule() {
   let content = readText("crates/storage-sqlite/src/db/mod.rs");
 
-  content = replaceOnce(
-    content,
-    `    let migration_result: Result<Vec<String>> = connection
-        .run_pending_migrations(MIGRATIONS)
-        .map(|versions| {
-            versions
-                .into_iter()
-                .map(|version| version.to_string())
-                .collect()
-        })
-        .map_err(|e| {
-            error!("Database migration failed: {}", e);
-            Error::Database(DatabaseError::MigrationFailed(e.to_string()))
-        });
-`,
-    `    let migration_result: Result<Vec<String>> = match connection.run_pending_migrations(MIGRATIONS)
+  const migrationStart = content.indexOf(
+    "        let migration_result: Result<Vec<String>> =",
+  );
+  const migrationEnd = content.indexOf(
+    "\n\n        // Always attempt to restore connection pragmas",
+    migrationStart,
+  );
+  if (migrationStart === -1 || migrationEnd === -1) {
+    throw new Error("Unable to locate migration result block");
+  }
+
+  const migrationReplacement = `        let migration_result: Result<Vec<String>> = match connection.run_pending_migrations(MIGRATIONS)
     {
         Ok(versions) => Ok(
             versions
@@ -75,8 +71,8 @@ function updateDatabaseModule() {
                 warn!(
                     "Detected missing allocation_targets schema; repairing legacy database, recording the legacy migration as applied, and retrying migrations."
                 );
-                repair_allocation_targets_schema(db_path)?;
-                mark_migration_applied(db_path, "2026-05-25-000002_allocation_targets")?;
+                repair_allocation_targets_schema(self.path())?;
+                mark_migration_applied(self.path(), "2026-05-25-000002_allocation_targets")?;
 
                 connection
                     .run_pending_migrations(MIGRATIONS)
@@ -99,13 +95,12 @@ function updateDatabaseModule() {
             }
         }
     };
-`,
-    "migration retry block",
-  );
+`;
+  content = content.slice(0, migrationStart) + migrationReplacement + content.slice(migrationEnd);
 
   content = insertBefore(
     content,
-    "pub fn run_migrations(db_path: &str) -> Result<()> {\n",
+    "pub fn get_db_path(input: &str) -> String {\n",
     `fn sqlite_master_exists(
     conn: &RusqliteConnection,
     object_type: &str,
