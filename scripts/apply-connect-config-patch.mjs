@@ -233,6 +233,8 @@ export const CONNECT_ENABLED = Boolean(
 function updateFrontendProvider() {
   let content = readText("apps/frontend/src/features/wealthfolio-connect/providers/wealthfolio-connect-provider.tsx");
 
+  content = content.replace('import { StartupScreen } from "@/components/startup-screen";\n', "");
+
   content = replaceOnce(
     content,
     'import { CONNECT_ENABLED } from "@/lib/connect-config";',
